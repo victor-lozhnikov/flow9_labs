@@ -1,0 +1,33 @@
+program = ws definition*:ds statement:st {Program(:ds, :st)};
+
+definition = "var" ws varname:name ws ":" ws vartype:type ws ";" ws {Definition(:name, :type)};
+statement = "{" ws operation*:ops "}" ws {Statement(:ops)};
+operation = print | test | union | while | iter | assignment | statement;
+
+vartype = int_type | array_type;
+int_type = "int" {IntType()};
+array_type = "[" ws vartype:type ws "]" {ArrayType(:type)};
+
+assignment = varname:var ws ":=" ws expression:expr ws ";" ws {Assignment(:var, :expr)};
+print = "print" ws "(" ws expression:expr ws ")" ws ";" ws {Print(:expr)};
+test = "test" ws "(" ws condition:cond ws ")" ws ";" ws {Test(:cond)};
+union = "union" ws statement:st {Union(:st)};
+while = "while" ws "(" ws condition:cond ")" ws statement:st {While(:cond, :st)};
+iter = "iter" ws statement:st {Iter(:st)};
+
+expression = functional_expression | arithmetic_expression | operand;
+operand = int | varname;
+
+arithmetic_expression = "(" ws expression:e1 ws operation_sign$sign ws expression:e2 ws ")" {ArithmeticExpression(:e1, $sign, :e2)};
+operation_sign = "+" | "-" | "*" | "/";
+
+functional_expression = appeal | update;
+appeal = "app" ws "(" ws expression:array ws "," ws expression:index ws ")" {Appeal(:array, :index)};
+update = "upd" ws "(" ws expression:array ws "," ws expression:index ws "," ws expression:new_val ws ")" {Update(:array, :index, :new_val)};
+
+condition = expression:e1 ws condition_sign$sign ws expression:e2 {Condition(:e1, $sign, :e2)};
+condition_sign = "==" | "!=" | "<" | ">" | "<=" | ">=";
+
+int = ('0'-'9')+ $d {Int(s2i($d))};
+varname = ('a'-'z' ('a'-'z' | '0'-'9')*) $name {VarName($name)};
+ws = (' ' | '\r' | '\n' | '\t')*;
