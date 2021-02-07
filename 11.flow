@@ -1,0 +1,145 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+lingoGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("#include nemo.lingo");
+	});
+}
+
+Program : (definitions : [Definition], statement : Statement);
+Definition : (name : VarName, type : VarType);
+Statement ::= SingleStatement, MultipleStatement;
+SingleStatement : (operation : Operation);
+MultipleStatement : (operations : [Operation]);
+Operation ::= Print, Assignment, Test, Union, While, EmptyOperation;
+VarType ::= IntType, ArrayOf;
+IntType : ();
+ArrayOfType : (type : VarType);
+Print : (name : VarName);
+Assignment : (name : VarName, expr : Expression);
+Test : (condition : Condition);
+Union : (expr1 : Expression, expr2 : Expression);
+While : (condition : Condition, statement : Statement);
+EmptyOperation : ();
+Expression ::= Operand, Arithmetic;
+Operand ::= VarName, Value;
+Arithmetic ::= Add, Mul, Sub, Div;
+Add : (left : Expression, right : Expression);
+Mul : (left : Expression, right : Expression);
+Sub : (left : Expression, right : Expression);
+Div : (left : Expression, right : Expression);
+Condition ::= Equal, Less, More, LessOrEqual, MoreOrEqual;
+Equal : (left : Expression, right : Expression);
+Less : (left : Expression, right : Expression);
+More : (left : Expression, right : Expression);
+LessOrEqual : (left : Expression, right : Expression);
+MoreOrEqual : (left : Expression, right : Expression);
+VarName : (name : string);
+Value ::= Int, ArrayOf;
+Int (value : int);
+ArrayOf (values : [Value]);
+
+State ::= ErrorState, NormalState;
+ErrorState : (error : string);
+NormalState : (types : Tree<VarName, VarType>, 
+            values : Tree<VarName, Value>, 
+            nextOperation : Operation,
+            nextStates : [State]);
+
+parseProgram(s : string) -> Program {
+    parsic(lingoGrammar(), s, defaultPegActions);
+}
+
+runProgram(p : Program) {
+    //varTypes = setDefinitions(p.definitions);
+    //statement = fold(p.operations, \cur_state, op -> runOperation(op, cur_state));
+}
+
+/*setDefinitions(ds : [Definition]) -> State {
+    state = fold(
+        ds, NormalState(makeTree(), makeTree(), EmptyOperation(), []), \cur_state, def -> {
+            switch(cur_state) {
+                ErrorState(s) : cur_state;
+                NormalState(types, values, next, states) : {
+                    switch(lookupTree(types, def.name)) {
+                        None() : {
+                            NormalState(setTree(types, def.name, def.type), values, def, []);
+                        }
+                        Some(val) : {
+                            ErrorState("var '" + def.name.name + "' already exists");
+                        }
+                    }
+                }
+            }
+        }
+    );
+    state;
+}*/
+
+/*setDefinition(d : Definition, s : State) -> State {
+
+}*/
+
+runOperation(op : Operation) {
+    /*switch(op) {
+        Print(name) : println()
+    }*/
+}
+
+main() {
+    p1 = parseProgram("
+    var v : int;
+    var v : [int];
+    {
+        print(v);
+        print(v);
+        x := (x + 1);
+        v := 1;
+        {
+            x := (x + 1) U
+            x := (x - 1)
+        };
+        (x < (x + 1)) ?;
+        x := (x + (2 * x));
+    }
+    ");
+    
+    p2 = parseProgram("
+    var n : int;
+    var x : int;
+    var y : int;
+    {
+        n := 12;
+        x := 0;
+        y := 0;
+        while (y <= n) {
+            y := (y + (x + (x + 1)));
+            x := (x + 1);
+        };
+        x := (x - 1);
+        print(x);
+    }
+    ");
+
+    p3 = parseProgram("
+    var n : int;
+    var a : [int];
+    {
+        n := 2;
+        a := [1, 2, 3];
+    }
+    ");
+
+    println(p1);
+    println(p2);
+    println(p3);
+    
+    runProgram(p1);
+    runProgram(p2);
+    
+    quit(0);
+}

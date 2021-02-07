@@ -1,0 +1,32 @@
+import string;
+
+fibNumber(n: int) {
+    if (n <= 0) 0
+    else if (n == 1) 1
+    else fibNumber(n-1) + fibNumber(n-2)
+}
+
+fibA(n: int)->[int] {
+    if (n == 0)         [0]
+    else if (n == 1)    [0, 1]
+    else {
+        prev = fibA(n - 1);
+        concat(prev, [prev[n - 2] + prev[n - 1]]);
+    }
+}
+
+fib_tail(n: int, acc: ref[int])->[int] {
+    if (n <= 2)         acc
+    else                fib_tail(n - 1, concat(acc, [acc[length(acc) - 2] + acc[length(acc) - 1]]))
+}
+
+fibB(n: int)->[int] {
+    if (n == 0)         [0]
+    else if (n == 1)    [0, 1]
+    else                fib_tail(n, [0, 1])
+}
+
+main() {
+    println(fibB(10));
+    quit(0);
+}

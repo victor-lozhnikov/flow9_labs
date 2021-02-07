@@ -1,0 +1,12 @@
+import string;
+
+i2smap (s:[int])->[string] {
+    map(s, i2s);
+}
+
+main() {
+    ints = [1, 2, 3, 4, 5];
+    strings = i2smap(ints);
+    println(strGlue(strings, "; "));
+    quit(0);
+}

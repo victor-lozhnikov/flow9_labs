@@ -1,0 +1,452 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+lingoGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("#include arith_full.lingo");
+	});
+}
+
+Expr ::= IntConst, Mul, Add, Sub, Div, Neg, Var;
+IntConst : (value : int);
+Add : (left : Expr, right : Expr);
+Sub : (left : Expr, right : Expr);
+Mul : (left : Expr, right : Expr);
+Div : (left : Expr, right : Expr);
+Neg : (arg : Expr);
+Var : (name : string);
+
+Rational(n : int, d : int);
+
+Monomial(prod : Tree<string, int>);
+Polynomial(sum : Tree<Monomial, int>);
+
+exprName(e : Expr) -> string {
+    switch(e) {
+        IntConst(val) : i2s(val);
+        Add(l, r) : "Add";
+        Sub(l, r) : "Sub";
+        Mul(l, r) : "Mul";
+        Div(l, r) : "Div";
+        Neg(arg) : "Neg";
+        Var(name) : "Var";
+    }
+}
+
+isDiv(e : Expr) -> bool {
+    switch(e) {
+        Div(l, r) : true;
+        default : false;
+    }
+}
+
+extractArgs(e : Expr) -> [Expr] {
+    switch(e) {
+        Add(l, r) : [l, r];
+        Sub(l, r) : [l, r];
+        Mul(l, r) : [l, r];
+        Div(l, r) : [l, r];
+        default : [e];
+    }
+}
+
+i2rat(a : int) -> Rational {
+    Rational(a, 1);
+}
+
+rat2s(r : Rational) -> string {
+    if (r.d == 1) {i2s(r.n);}
+    else if (r.d == 0) {"inf";}
+    else i2s(r.n) + "/" + i2s(r.d);
+}
+
+simplifyRat(r : Rational) -> Rational {
+    g = iabs(gcd(r.n, r.d));
+    if ((r.n < 0 && r.d < 0) || (r.n > 0 && r.d < 0)) {
+        Rational(-r.n / g, -r.d / g);
+    }
+    else {
+        Rational(r.n / g, r.d / g);
+    }
+}
+
+addRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d + r.n * l.d, l.d * r.d);
+}
+
+subRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d - r.n * l.d, l.d * r.d);
+}
+
+mulRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.n, l.d * r.d);
+}
+
+divRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d, l.d * r.n);
+}
+
+negRat(arg : Rational) {
+    Rational(-arg.n, arg.d);
+}
+
+expr2s(e : Expr) -> string {
+    switch (e) {
+        IntConst(c) : i2s(c);
+        Mul(l, r) : "(" + expr2s(l) + " * " + expr2s(r) + ")";
+        Add(l, r) : "(" + expr2s(l) + " + " + expr2s(r) + ")";
+        Sub(l, r) : "(" + expr2s(l) + " - " + expr2s(r) + ")";
+        Div(l, r) : "(" + expr2s(l) + " / " + expr2s(r) + ")";
+        Neg(arg) : "(-" + expr2s(arg) + ")";
+        Var(x) : x;
+    }
+}
+
+expr2rat(e: Expr, vars : Tree<string, int>) -> Rational {
+    switch (e) {
+        IntConst(c) : i2rat(c);
+        Mul(l, r) : simplifyRat(mulRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Add(l, r) : simplifyRat(addRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Sub(l, r) : simplifyRat(subRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Div(l, r) : simplifyRat(divRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Neg(arg) : simplifyRat(negRat(expr2rat(arg, vars)));
+        Var(name) : {
+            x = switch(lookupTree(vars, name)) {
+                None() : i2rat(0);
+                Some(val) : i2rat(val);
+            };
+            x;
+        }
+    }
+}
+
+s2expr(s : string) -> Expr {
+    parsic(lingoGrammar(), s, defaultPegActions);
+}
+
+derivation(e : Expr, var : string) -> Expr {
+    switch (e) {
+        IntConst(c) : IntConst(0);
+        Add(l, r) : Add(derivation(l, var), derivation(r, var));
+        Sub(l, r) : Sub(derivation(l, var), derivation(r, var));
+        Mul(l, r) : Add(Mul(derivation(l, var), r), Mul(l, derivation(r, var)));
+        Div(l, r) : Div(Sub(Mul(derivation(l, var), r), Mul(l, derivation(r, var))), Mul(r, r));
+        Neg(arg) : Neg(derivation(arg, var));
+        Var(name) : {
+            if (name == var) {
+                IntConst(1);
+            }
+            else {
+                IntConst(0);
+            }
+        }
+    }
+}
+
+simplifyExpr(e : Expr) -> Expr {
+    switch (e) {
+        Mul(l, r) : {
+            if (simplifyExpr(l) == IntConst(1)) {simplifyExpr(r);} // 1 * x -> x
+            else if (simplifyExpr(r) == IntConst(1)) {simplifyExpr(l);} // x * 1 -> x
+            else if (simplifyExpr(l) == IntConst(0) || (simplifyExpr(r) == IntConst(0))) {IntConst(0);} // 0 * x || x * 0 -> 0
+            else {Mul(simplifyExpr(l), simplifyExpr(r));}
+        }
+        Add (l, r) : {
+            if (simplifyExpr(l) == IntConst(0)) {simplifyExpr(r);} // 0 + x -> x
+            else if (simplifyExpr(r) == IntConst(0)) {simplifyExpr(l);} // x + 0 -> x
+            else {Add(simplifyExpr(l), simplifyExpr(r));}
+        }
+        Sub(l, r) : {
+            if (simplifyExpr(l) == IntConst(0)) {Neg(simplifyExpr(r));} // 0 - x -> -x
+            else if (simplifyExpr(r) == IntConst(0)) {simplifyExpr(l);} // x - 0 -> x
+            else if (simplifyExpr(l) == simplifyExpr(r)) {IntConst(0);} // x - x -> 0
+            else Sub(simplifyExpr(l), simplifyExpr(r));
+        }
+        Div(l, r) : {
+            if (simplifyExpr(l) == IntConst(0)) {IntConst(0);} // 0 / x -> 0
+            else if (simplifyExpr(l) == simplifyExpr(r)) {IntConst(1);} // x / x -> 1
+            else Div(simplifyExpr(l), simplifyExpr(r));
+        }
+        default : e;
+    }
+}
+
+expr2commonDenum(e : Expr) -> Expr {
+    switch(e) {
+        IntConst(val) : IntConst(val);
+        Var(name) : Var(name);
+        Neg(arg) : Neg(expr2commonDenum(arg));
+        Add(l, r) : {
+            newL = expr2commonDenum(l);
+            newR = expr2commonDenum(r);
+            argsL = extractArgs(newL);
+            argsR = extractArgs(newR);
+            if (isDiv(newL) && isDiv(newR)) { // a/b + c/d -> (ad + bc) / bd
+                Div(Add(Mul(argsL[0], argsR[1]), Mul(argsL[1], argsR[0])), Mul(argsL[1], argsR[1]));
+            }
+            else if (isDiv(newL)) { // a/b + c -> (a + bc) / b
+                Div(Add(argsL[0], Mul(argsL[1], newR)), argsL[1]);
+            }
+            else if (isDiv(newR)) { // a + b/c -> (ac + b) / c
+                Div(Add(Mul(newL, argsR[1]), argsR[0]), argsR[1]);
+            }
+            else e;
+        }
+        Sub(l, r) : {
+            newL = expr2commonDenum(l);
+            newR = expr2commonDenum(r);
+            argsL = extractArgs(newL);
+            argsR = extractArgs(newR);
+            if (isDiv(newL) && isDiv(newR)) { // a/b - c/d -> (ad - bc) / bd
+                Div(Sub(Mul(argsL[0], argsR[1]), Mul(argsL[1], argsR[0])), Mul(argsL[1], argsR[1]));
+            }
+            else if (isDiv(newL)) { // a/b - c -> (a - bc) / b
+                Div(Sub(argsL[0], Mul(argsL[1], newR)), argsL[1]);
+            }
+            else if (isDiv(newR)) { // a - b/c -> (ac - b) / c
+                Div(Sub(Mul(newL, argsR[1]), argsR[0]), argsR[1]);
+            }
+            else e;
+        }
+        Mul(l, r) : {
+            newL = expr2commonDenum(l);
+            newR = expr2commonDenum(r);
+            argsL = extractArgs(newL);
+            argsR = extractArgs(newR);
+            if (isDiv(newL) && isDiv(newR)) { // a/b * c/d -> ac / bd
+                Div(Mul(argsL[0], argsR[0]), Mul(argsL[1], argsR[1]));
+            }
+            else if (isDiv(newL)) { // a/b * c -> ac / b
+                Div(Mul(argsL[0], newR), argsL[1]);
+            }
+            else if (isDiv(newR)) { // a * b/c -> ab / c
+                Div(Mul(newL, argsR[0]), argsR[1]);
+            }
+            else e;
+        }
+        Div(l, r) : {
+            newL = expr2commonDenum(l);
+            newR = expr2commonDenum(r);
+            argsL = extractArgs(newL);
+            argsR = extractArgs(newR);
+            if (isDiv(newL) && isDiv(newR)) { // a/b / c/d -> ad / bc
+                Div(Mul(argsL[0], argsR[1]), Mul(argsL[1], argsR[0]));
+            }
+            else if (isDiv(newL)) { // a/b / c -> a / bc
+                Div(argsL[0], Mul(argsL[1], newR));
+            }
+            else if (isDiv(newR)) { // a / b/c -> ac / b
+                Div(Mul(newL, argsR[1]), argsR[0]);
+            }
+            else e;
+        }
+    }
+}
+
+expr2polynomial(e : Expr) -> Polynomial {
+    switch(e) {
+        IntConst(val) : Polynomial(makeTree1(Monomial(makeTree1("1", 1)), val));
+        Var(name) : Polynomial(makeTree1(Monomial(makeTree1(name, 1)), 1));
+        Add(l, r) : {
+            Polynomial(mergeTreeCustom(expr2polynomial(l).sum, expr2polynomial(r).sum, \var, k1, k2 -> k1 + k2));
+        }
+        Sub(l, r) : {
+            Polynomial(mergeTreeCustom(expr2polynomial(l).sum, expr2polynomial(Neg(r)).sum, \var, k1, k2 -> k1 + k2));
+        }
+        Neg(arg) : {
+            Polynomial(mapTree(expr2polynomial(arg).sum, \k -> -k));
+        }
+        Mul(l, r) : {
+            treeL = expr2polynomial(l).sum;
+            treeR = expr2polynomial(r).sum;
+            Polynomial(
+                foldTree(treeL, makeTree(), \monoL, k1, acc1 -> {
+                    foldTree(treeR, acc1, \monoR, k2, acc2 -> {
+                        mergedMonos = Monomial(mergeTreeCustom(monoL.prod, monoR.prod, \var, deg1, deg2 -> {
+                            if (var == "1") 1
+                            else deg1 + deg2
+                        }));
+                        mergeTreeCustom(acc2, makeTree1(mergedMonos, k1 * k2), \var, c1, c2 -> c1 + c2);
+                    });
+                })
+            );
+        }
+        default : Polynomial(makeTree());
+    }
+}
+
+monomial2s(m : Monomial) -> string {
+    foldTree(m.prod, "", \var, deg, acc -> {
+        if (var == "1") acc
+        else if (deg == 1) concatStrings([acc, " * ", var])
+        else if (deg == 0) acc
+        else concatStrings([acc, " * ", var, "^", i2s(deg)])
+    });
+}
+
+polynomial2s(p : Polynomial) -> string {
+    foldTree(p.sum, "", \mono, k, acc -> {
+        if (acc == "") concatStrings(["(", i2s(k), monomial2s(mono), ")"])
+        else concatStrings([acc, " + (", i2s(k), monomial2s(mono), ")"]);
+    });
+}
+
+divExpr2ratFunc(e : Expr) -> [Polynomial] {
+    switch(e) {
+        Div(l, r) : {
+            [expr2polynomial(l), expr2polynomial(r)];
+        }
+        default : [expr2polynomial(e)];
+    }
+}
+
+ratFunc2s(p : [Polynomial]) -> string {
+    if (length(p) == 1) polynomial2s(p[0])
+    else "[" + polynomial2s(p[0]) + "] / [" + polynomial2s(p[1]) + "]";
+}
+
+Transform(from : Expr, to : Expr);
+
+transform(from : string, to : string) -> Transform {
+    Transform(s2expr(from), s2expr(to));
+}
+
+transformations = [
+    transform("(x + 0)", "x"),
+    transform("(x * 1)", "x"),
+    transform("(x - x)", "0"),
+    transform("(0 * x)", "0"), 
+    transform("((x * a) + (x * b))", "(x * (a + b))"),
+    transform("(x + x)", "(2 * x)"),
+    transform("((x * x) - (y * y))", "((x + y) * (x - y))")
+];
+
+MatchResult(result : bool, context : Tree<string, Expr>);
+
+matchCheck (e1 : Expr, e2 : Expr, context : Tree<string, Expr>) -> MatchResult {
+    switch (e1) {
+        IntConst(val1) : {
+            switch (e2) {
+                IntConst(val2) : MatchResult(val1 == val2, context);
+                default : MatchResult(false, context);
+            }
+        }
+        Add(l1, r1) : {
+            switch (e2) {
+                Add(l2, r2) : {
+                    result1 = matchCheck(l1, l2, context);
+                    if (result1.result == false) result1
+                    else matchCheck(r1, r2, result1.context);
+                }
+                default : MatchResult(false, context);
+            }
+        }
+        Mul(l1, r1) : {
+            switch (e2) {
+                Mul(l2, r2) : {
+                    result1 = matchCheck(l1, l2, context);
+                    if (result1.result == false) result1
+                    else matchCheck(r1, r2, result1.context);
+                }
+                default : MatchResult(false, context);
+            }
+        }
+        Sub(l1, r1) : {
+            switch (e2) {
+                Sub(l2, r2) : {
+                    result1 = matchCheck(l1, l2, context);
+                    if (result1.result == false) result1
+                    else matchCheck(r1, r2, result1.context);
+                }
+                default : MatchResult(false, context);
+            }
+        }
+        Div(l1, r1) : {
+            switch (e2) {
+                Div(l2, r2) : {
+                    result1 = matchCheck(l1, l2, context);
+                    if (result1.result == false) result1
+                    else matchCheck(r1, r2, result1.context);
+                }
+                default : MatchResult(false, context);
+            }
+        }
+        Neg(arg1) : {
+            switch (e2) {
+                Neg(arg2) : matchCheck(arg1, arg2, context);
+                default : MatchResult(false, context);
+            }
+        }
+        Var(name) : {
+            switch(lookupTree(context, name)) {
+                None() : {
+                    MatchResult(true, setTree(context, name, e2));
+                }
+                Some(val) : {
+                    MatchResult(val == e2, context);
+                }
+            }
+        }
+    }
+}
+
+transformExprWithContext(e : Expr, context : Tree<string, Expr>) -> Expr {
+    switch(e) {
+        IntConst(val) : e;
+        Add(l, r) : Add(transformExprWithContext(l, context), transformExprWithContext(r, context));
+        Mul(l, r) : Mul(transformExprWithContext(l, context), transformExprWithContext(r, context));
+        Sub(l, r) : Sub(transformExprWithContext(l, context), transformExprWithContext(r, context));
+        Div(l, r) : Div(transformExprWithContext(l, context), transformExprWithContext(r, context));
+        Neg(arg) : Neg(transformExprWithContext(arg, context));
+        Var(name) : {
+            switch(lookupTree(context, name)) {
+                None() : {
+                    e;
+                }
+                Some(val) : {
+                    val;
+                }
+            }
+        }
+    }
+}
+
+tryTransformExprByRule(e : Expr, t : Transform) -> Expr {
+    matchResult = matchCheck(t.from, e, makeTree());
+    if (matchResult.result == false) e
+    else transformExprWithContext(t.to, matchResult.context);
+}
+
+transformExprByAllRules(e : Expr) -> Expr {
+    e1 = fold(transformations, e, \exp, t -> {
+        tryTransformExprByRule(exp, t);
+    });
+
+    switch (e1) {
+        IntConst(val) : e1;
+        Var(name) : e1;
+        Add(l, r) : Add(transformExprByAllRules(l), transformExprByAllRules(r));
+        Mul(l, r) : Mul(transformExprByAllRules(l), transformExprByAllRules(r));
+        Sub(l, r) : Sub(transformExprByAllRules(l), transformExprByAllRules(r));
+        Div(l, r) : Div(transformExprByAllRules(l), transformExprByAllRules(r));
+        Neg(arg) : Neg(transformExprByAllRules(arg));
+    }
+}
+
+maxTransform(e : Expr) -> Expr {
+    newExpr = transformExprByAllRules(e);
+    if (newExpr == e) e
+    else maxTransform(newExpr);
+}
+
+main() {
+
+    println(expr2s(maxTransform(s2expr("(((a * 2) + 0) + (a * 3))"))));
+    println(expr2s(maxTransform(s2expr("(((x * 1) * x) - (5 * 5))"))));
+    println(expr2s(maxTransform(s2expr("((2 * y) + (x + x))"))));
+
+    quit(0);
+}

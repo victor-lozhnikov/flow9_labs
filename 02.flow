@@ -1,0 +1,11 @@
+import string;
+
+aggregate(source:[int])->int {
+    fold(source, 0, \accumulator, x -> accumulator + x);
+}
+
+main() {
+    ints = [1, 2, 3, 4, 5];
+    println(aggregate(ints));
+    quit(0);
+}R

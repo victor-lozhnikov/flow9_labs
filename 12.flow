@@ -1,0 +1,433 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+lingoGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("#include nemo.lingo");
+	});
+}
+
+parseProgram(s : string) -> Program {
+    parsic(lingoGrammar(), s, defaultPegActions);
+}
+
+Program : (definitions : [Definition], statement : Statement);
+
+Definition : (varname : VarName, vartype : VarType);
+Statement : (operations : [Operation]);
+Operation ::= Assignment, Print, Test, Union, While, Iter, Statement;
+
+VarType ::= IntType, ArrayType;
+IntType : ();
+ArrayType : (type : VarType);
+
+Assignment : (var : VarName, expression : Expression);
+Print : (expression : Expression);
+Test : (condition : Condition);
+Union : (statement : Statement);
+While : (condition : Condition, statement : Statement);
+Iter : (statement : Statement);
+
+Expression ::= Operand, ArithmeticExpression, FunctionalExpression;
+Operand ::= Int, VarName;
+
+ArithmeticExpression : (expr1 : Expression, sign : string, expr2 : Expression);
+
+FunctionalExpression ::= Appeal, Update;
+Appeal : (array : Expression, index : Expression);
+Update : (array : Expression, index : Expression, newVal : Expression);
+
+Condition : (expr1 : Expression, sign : string, expr2 : Expression);
+
+Value ::= Int, Array, NaN;
+
+Int : (value : int);
+Array : (type : VarType, array : Tree<int, Value>);
+NaN : ();
+VarName : (name : string);
+
+VMLine ::= VMOperation, VMCondition, GoTo, ExitSuccess;
+SingleOperation ::= Assignment, Print, Test;
+VMOperation : (operation : SingleOperation, goto : [int]);
+VMCondition : (condition : Condition, ifTrue : [int], ifFalse : [int]);
+GoTo : (goto : [int]);
+ExitSuccess : ();
+
+State ::= ErrorState, NormalState;
+ErrorState : (
+    label : int,
+    message : string
+);
+NormalState : (
+    label : int,
+    types : Tree<VarName, VarType>, 
+    values : Tree<VarName, Value>,
+);
+
+createStartState(prog : Program) -> State {
+    fold(prog.definitions, NormalState(0, makeTree(), makeTree()), \cur_state, def -> {
+        switch(cur_state) {
+            ErrorState(l, s) : cur_state;
+            NormalState(l, types, values) : {
+                switch(lookupTree(types, def.varname)) {
+                    None() : {
+                        NormalState(l, setTree(types, def.varname, def.vartype), values);
+                    }
+                    Some(val) : {
+                        ErrorState(-1, "var '" + def.varname.name + "' already defined");
+                    }
+                }
+            }
+        }
+    });
+}
+
+runVM(state : State, program : Tree<int, VMLine>) {
+    switch(state) {
+        ErrorState(l, s) : {
+            println("ERROR in label " + i2s(l) + " : " + s);
+        }
+        NormalState(l, types, values) : {
+            switch(lookupTree(program, l)) {
+                None() : {
+                    st = ErrorState(-1, "label " + i2s(l) + " not found");
+                    runVM(st, program);
+                }
+                Some(line) : {
+                    runVMLine(line, state, program);
+                }
+            }
+        }
+    }
+}
+
+runVMLine(line : VMLine, state : NormalState, program : Tree<int, VMLine>) {
+    switch(line) {
+        ExitSuccess() : {}
+        GoTo(goto) : {
+            goToLabels(goto, state, program);
+        }
+        VMOperation(oper, goto) : {
+            st = runOperation(oper, state);
+            switch(st) {
+                ErrorState(l, s) : {
+                    runVM(st, program);
+                }
+                NormalState(l, types, values) : {
+                    goToLabels(goto, st, program);
+                }
+            }
+        }
+        VMCondition(cond, ifTrue, ifFalse) : {
+            switch(checkCondition(cond, state)) {
+                None() : {
+                    st = ErrorState(state.label, "types are incompatible");
+                    runVM(st, program);
+                }
+                Some(res) : {
+                    if (res) goToLabels(ifTrue, state, program)
+                    else goToLabels(ifFalse, state, program);
+                }
+            }
+        }
+    }
+}
+
+runOperation(oper : SingleOperation, state : NormalState) -> State {
+    switch(oper) {
+        Assignment(var, expr) : {
+            switch(lookupTree(state.types, var)) {
+                None() : {
+                    ErrorState(state.label, "var " + var.name + " is not defined");
+                }
+                Some(type) : {
+                    value = calculateExpression(expr, state);
+                    switch(value) {
+                        NaN() : {
+                            ErrorState(state.label, "unable to calculate expression");
+                        }
+                        default : {
+                            if (checkCompatibility(type, value))
+                                NormalState(state.label, state.types, setTree(state.values, var, value))
+                            else
+                                ErrorState(state.label, "types are incompatible");
+                        }
+                    }
+                }
+            }
+        }
+        Print(expr) : {
+            value = calculateExpression(expr, state);
+            switch(value) {
+                Int(val) : {
+                    println(i2s(val));
+                    state;
+                }
+                default : ErrorState(state.label, "type is unprintable");
+            }
+        }
+        Test(cond) : {
+            switch(checkCondition(cond, state)) {
+                None() : ErrorState(state.label, "types are incompatible");
+                Some(res) : {
+                    if (res) state
+                    else ErrorState(state.label, "test failed");
+                }
+            }
+        }
+    }
+}
+
+checkCompatibility(type : VarType, value : Value) -> bool {
+    switch (value) {
+        NaN() : false;
+        Int(val) : {
+            switch(type) {
+                IntType() : true;
+                default : false;
+            }
+        }
+        Array(t, tr) : {
+            ArrayType(t) == type;
+        }
+    }
+}
+
+calculateExpression(expr : Expression, state : NormalState) -> Value {
+    switch(expr) {
+        Int(val) : expr;
+        VarName(name) : {
+            switch(lookupTree(state.types, expr)) {
+                None() : {
+                    NaN();
+                }
+                Some(type) : {
+                    switch(lookupTree(state.values, expr)) {
+                        None() : {
+                            switch(type) {
+                                ArrayType(t) : Array(t, makeTree());
+                                default : NaN();
+                            }
+                        }
+                        Some(val) : {
+                            val;
+                        }
+                    }
+                }
+            }
+        }
+        ArithmeticExpression(expr1, sgn, expr2) : {
+            switch(calculateExpression(expr1, state)) {
+                Int(val1) : {
+                    switch(calculateExpression(expr2, state)) {
+                        Int(val2) : {
+                            if (sgn == "+") Int(val1 + val2)
+                            else if (sgn == "-") Int(val1 - val2)
+                            else if (sgn == "*") Int(val1 * val2)
+                            else if (sgn == "/") Int(val1 / val2)
+                            else NaN();
+                        }
+                        default : NaN();
+                    }
+                }
+                default : NaN();
+            }
+        }
+        Appeal(expr1, expr2) : {
+            arr = calculateExpression(expr1, state);
+            ind = calculateExpression(expr2, state);
+            switch(arr) {
+                Array(type, tree) : {
+                    switch(ind) {
+                        Int(val) : {
+                            switch(lookupTree(tree, val)) {
+                                None() : {
+                                    switch(type) {
+                                        ArrayType(t) : Array(t, makeTree());
+                                        default : NaN();
+                                    }
+                                }
+                                Some(value) : value;
+                            }
+                        }
+                        default : NaN();
+                    }
+                }
+                default : NaN();
+            }
+        }
+        Update(expr1, expr2, expr3) : {
+            arr = calculateExpression(expr1, state);
+            ind = calculateExpression(expr2, state);
+            newVal = calculateExpression(expr3, state);
+            switch (arr) {
+                Array(t, tr) : {
+                    switch(ind) {
+                        Int(val) : {
+                            if (checkCompatibility(t, newVal))
+                                Array(t, setTree(tr, val, newVal))
+                            else NaN();
+                        }
+                        default : NaN();
+                    }
+                }
+                default : NaN();
+            }
+        }
+    }
+}
+
+checkCondition(cond : Condition, state : NormalState) -> Maybe<bool> {
+    val1 = calculateExpression(cond.expr1, state);
+    val2 = calculateExpression(cond.expr2, state);
+    switch (val1) {
+        Int(v1) : {
+            switch (val2) {
+                Int(v2) : {
+                    if (cond.sign == "==") Some(v1 == v2)
+                    else if (cond.sign == "!=") Some(v1 != v2)
+                    else if (cond.sign == "<") Some(v1 < v2)
+                    else if (cond.sign == ">") Some(v1 > v2)
+                    else if (cond.sign == ">=") Some(v1 >= v2)
+                    else if (cond.sign == "<=") Some(v1 <= v2)
+                    else None();
+                }
+                default : None();
+            }
+        }
+        default : None();
+    }
+}
+
+goToLabels(goto : [int], state : NormalState, program : Tree<int, VMLine>) {
+    iter(goto, \l -> {
+        runVM(NormalState(l, state.types, state.values), program);
+    });
+}
+
+translateProgramToVM(prog : Program) -> Tree<int, VMLine> {
+    tree = translateOperationToVM(prog.statement, 0);
+    setTree(tree, sizeTree(tree), ExitSuccess());
+}
+
+translateOperationsToVM (operations : [Operation], startLabel : int) -> Tree<int, VMLine> {
+    fold(operations, makeTree(), \acc, oper -> {
+        mergeTree(acc, translateOperationToVM(oper, startLabel + sizeTree(acc)));
+    });
+}
+
+translateOperationToVM (operation : Operation, startLabel : int) -> Tree<int, VMLine> {
+    switch(operation) {
+        SingleOperation() : {
+            makeTree1(startLabel, VMOperation(operation, [startLabel + 1]));
+        }
+        While(cond, st) :  {
+            opTree = translateOperationToVM(st, startLabel + 1);
+            opTree1 = setTree(opTree, startLabel + sizeTree(opTree) + 1, GoTo([startLabel]));
+            setTree(opTree1, startLabel, VMCondition(cond, [startLabel + 1], [startLabel + sizeTree(opTree1) + 1]));
+        }
+        Union(st) : {
+            result = foldi(st.operations, Triple(makeTree(), [], []), \ind, acc, oper -> {
+                opTree = mergeTree(acc.first, translateOperationToVM(oper, startLabel + sizeTree(acc.first) + ind + 1));
+                choiceLabels = arrayPush(acc.second, startLabel + sizeTree(acc.first) + ind + 1);
+                gotoLabels = arrayPush(acc.third, startLabel + sizeTree(opTree) + ind + 1);
+                Triple(opTree, choiceLabels, gotoLabels);
+            });
+            tree = setTree(result.first, startLabel, GoTo(result.second));
+            nextLabel = startLabel + sizeTree(result.first) + length(st.operations) + 1;
+            fold(result.third, tree, \acc, label -> {
+                setTree(acc, label, GoTo([nextLabel]));
+            });
+        }
+        Iter(st) : {
+            opTree = translateOperationToVM(st, startLabel + 1);
+            opTree1 = setTree(opTree, startLabel + sizeTree(opTree) + 1, GoTo([startLabel]));
+            setTree(opTree1, startLabel, GoTo([startLabel + 1, startLabel + sizeTree(opTree1) + 1]));
+        }
+        Statement(opers) : {
+            translateOperationsToVM(opers, startLabel);
+        }
+    }
+}
+
+findMaxLabel (tree : Tree<int, VMLine>) -> int {
+    foldTree(tree, -1, \label, line, acc -> {
+        max(acc, label);
+    })
+}
+
+VMProgram2s(program : Tree<int, VMLine>) -> string {
+    foldTree(program, "", \label, line, acc -> {
+        acc + i2s(label) + " : " + switch(line) {
+            VMOperation(oper, goto) : {
+                singleOperation2s(oper) + " then goto " + intArray2s(goto);
+            }
+            VMCondition(cond, ifTrue, ifFalse) : {
+                "if (" + cond2s(cond) + ") then goto " + intArray2s(ifTrue) + " else goto " + intArray2s(ifFalse);
+            }
+            GoTo(goto) : {
+                "goto " + intArray2s(goto);
+            }
+            ExitSuccess() : {
+                "exit success";
+            }
+        } + "\n";
+    });
+}
+
+intArray2s(arr : [int]) -> string {
+    foldi(arr, "[", \i, acc, num -> {
+        acc + i2s(num) +  if (i == length(arr) - 1) "" else ", ";
+    }) + "]";
+}
+
+singleOperation2s(oper : SingleOperation) -> string {
+    switch(oper) {
+        Assignment(var, expr) : {
+            var.name + " := " + expr2s(expr);
+        }
+        Print(expr) : {
+            "print" + "(" + expr2s(expr) + ")";
+        }
+        Test(cond) : {
+            "test" + "(" + cond2s(cond) + ")";
+        }
+    }
+}
+
+expr2s(expr : Expression) -> string {
+    switch(expr) {
+        Int(val) : {
+            i2s(val);
+        }
+        VarName(name) : {
+            name;
+        }
+        ArithmeticExpression(e1, sgn, e2) : {
+            "(" + expr2s(e1) + " " + sgn + " " + expr2s(e2) + ")";
+        }
+        Appeal(arr, ind) : {
+            "app(" + expr2s(arr) + ", " + expr2s(ind) + ")";
+        }
+        Update(arr, ind, newVal) : {
+            "upd(" + expr2s(arr) + ", " + expr2s(ind) + ", " + expr2s(newVal) + ")";
+        }
+    }
+}
+
+cond2s(cond : Condition) -> string {
+    expr2s(cond.expr1) + " " + cond.sign + " " + expr2s(cond.expr2);
+}
+
+main() {
+    code = getFileContent("projects/tests/test1.nemo");
+    nmProgram = parseProgram(code);
+    vmProgram = translateProgramToVM(nmProgram);
+    println(VMProgram2s(vmProgram));
+    startState = createStartState(nmProgram);
+    runVM(startState, vmProgram);
+    quit(0);
+}

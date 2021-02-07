@@ -1,0 +1,74 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+lingoGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("#include arith_rpn.lingo");
+	});
+}
+
+RpnExpr ::= IntConst, Mul, Add;
+IntConst2 : (value : int);
+Mul2 : ();
+Add2 : ();
+
+Expr ::= IntConst, Mul, Add;
+IntConst : (value : int);
+Mul : (left : Expr, right : Expr);
+Add : (left : Expr, right : Expr);
+
+
+Str(e : Expr) -> string {
+    switch (e) {
+        IntConst(c) : {i2s(c)}
+        Mul(l, r) : {"(" + Str(l) + " * " + Str(r) + ")"}
+        Add(l, r) : {"(" + Str(l) + " + " + Str(r) + ")"}
+    }
+}
+
+Val(e: Expr) -> int {
+    switch (e) {
+        IntConst(c) : {c}
+        Mul(l, r) : {Val(l) * Val(r)}
+        Add(l, r) : {Val(l) + Val(r)}
+    }
+}
+
+Parse(s : string) -> Expr {
+    parsic(lingoGrammar(), s, defaultPegActions);
+}
+
+ExprToRpn(e : Expr) -> string {
+    switch (e) {
+        IntConst(c) : {i2s(c)}
+        Mul(l, r) : {ExprToRpn(l) + " " + ExprToRpn(r) + " *"}
+        Add(l, r) : {ExprToRpn(l) + " " + ExprToRpn(r) + " +"}
+    }
+}
+
+pop(stack : ref [?]) -> ? {
+    topPos = length(^stack) - 1;
+    element = ^stack[topPos];
+    stack := subrange(^stack, 0, topPos);
+    element;
+}
+
+/*ar2rpn(e : Expr) -> [RpnExpr] {
+
+}
+
+rpn2ar(e : [RpnExpr]) -> Expr {
+
+}*/
+
+main() {
+    result = Parse("+ * 1 2 * 3 4");
+    
+    println(Str(result));
+    println(Val(result));
+    println(ExprToRpn(result));
+    quit(0);
+}

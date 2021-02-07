@@ -1,0 +1,58 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+lingoGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("#include arith.lingo");
+	});
+}
+
+IntConst : (value : int);
+Mul : (left : Expr, right : Expr);
+Add : (left : Expr, right : Expr);
+Expr ::= IntConst, Mul, Add;
+
+Str(e : Expr) -> string {
+    switch (e) {
+        IntConst(c) : {i2s(c)}
+        Mul(l, r) : {"(" + Str(l) + " * " + Str(r) + ")"}
+        Add(l, r) : {"(" + Str(l) + " + " + Str(r) + ")"}
+    }
+}
+
+Val(e: Expr) -> int {
+    switch (e) {
+        IntConst(c) : {c}
+        Mul(l, r) : {Val(l) * Val(r)}
+        Add(l, r) : {Val(l) + Val(r)}
+    }
+}
+
+Parse(s : string) -> Expr {
+    parsic(lingoGrammar(), s, defaultPegActions);
+}
+
+main() {
+    expr1 = Mul(IntConst(6), IntConst(7));
+    expr2 = Add(IntConst(6), IntConst(7));
+
+    //(2 + 3) * 11
+    expr3 = Mul(Add(IntConst(2), IntConst(3)), IntConst(11));
+
+    //(2 * 3) + 11
+    expr4 = Add(Mul(IntConst(2), IntConst(3)), IntConst(11));
+
+    println(Str(expr3));
+    println(Str(expr4));
+    println(Val(expr3));
+    println(Val(expr4));
+
+    result = Parse("2+3*5+1*6");
+    
+    println(Str(result));
+    println(Val(result));
+    quit(0);
+}

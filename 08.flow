@@ -1,0 +1,155 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+lingoGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("#include arith_full.lingo");
+	});
+}
+
+Expr ::= IntConst, Mul, Add, Sub, Div, Neg, Var;
+IntConst : (value : int);
+Add : (left : Expr, right : Expr);
+Sub : (left : Expr, right : Expr);
+Mul : (left : Expr, right : Expr);
+Div : (left : Expr, right : Expr);
+Neg : (arg : Expr);
+Var : (name : string);
+
+Rational(n : int, d : int);
+
+i2rat(a : int) -> Rational {
+    Rational(a, 1);
+}
+
+rat2s(r : Rational) -> string {
+    if (r.d == 1) {i2s(r.n);}
+    else if (r.d == 0) {"inf";}
+    else i2s(r.n) + "/" + i2s(r.d);
+}
+
+simplifyRat(r : Rational) -> Rational {
+    g = iabs(gcd(r.n, r.d));
+    if ((r.n < 0 && r.d < 0) || (r.n > 0 && r.d < 0)) {
+        Rational(-r.n / g, -r.d / g);
+    }
+    else {
+        Rational(r.n / g, r.d / g);
+    }
+}
+
+addRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d + r.n * l.d, l.d * r.d);
+}
+
+subRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d - r.n * l.d, l.d * r.d);
+}
+
+mulRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.n, l.d * r.d);
+}
+
+divRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d, l.d * r.n);
+}
+
+negRat(arg : Rational) {
+    Rational(-arg.n, arg.d);
+}
+
+expr2s(e : Expr) -> string {
+    switch (e) {
+        IntConst(c) : i2s(c);
+        Mul(l, r) : "(" + expr2s(l) + " * " + expr2s(r) + ")";
+        Add(l, r) : "(" + expr2s(l) + " + " + expr2s(r) + ")";
+        Sub(l, r) : "(" + expr2s(l) + " - " + expr2s(r) + ")";
+        Div(l, r) : "(" + expr2s(l) + " / " + expr2s(r) + ")";
+        Neg(arg) : "(-" + expr2s(arg) + ")";
+        Var(x) : x;
+    }
+}
+
+expr2rat(e: Expr, vars : Tree<string, int>) -> Rational {
+    switch (e) {
+        IntConst(c) : i2rat(c);
+        Mul(l, r) : simplifyRat(mulRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Add(l, r) : simplifyRat(addRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Sub(l, r) : simplifyRat(subRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Div(l, r) : simplifyRat(divRat(expr2rat(l, vars), expr2rat(r, vars)));
+        Neg(arg) : simplifyRat(negRat(expr2rat(arg, vars)));
+        Var(name) : {
+            x = switch(lookupTree(vars, name)) {
+                None() : i2rat(0);
+                Some(val) : i2rat(val);
+            };
+            x;
+        }
+    }
+}
+
+s2expr(s : string) -> Expr {
+    parsic(lingoGrammar(), s, defaultPegActions);
+}
+
+derivation(e : Expr, var : string) -> Expr {
+    switch (e) {
+        IntConst(c) : IntConst(0);
+        Add(l, r) : Add(derivation(l, var), derivation(r, var));
+        Sub(l, r) : Sub(derivation(l, var), derivation(r, var));
+        Mul(l, r) : Add(Mul(derivation(l, var), r), Mul(l, derivation(r, var)));
+        Div(l, r) : Div(Sub(Mul(derivation(l, var), r), Mul(l, derivation(r, var))), Mul(r, r));
+        Neg(arg) : Neg(derivation(arg, var));
+        Var(name) : {
+            if (name == var) {
+                IntConst(1);
+            }
+            else {
+                IntConst(0);
+            }
+        }
+    }
+}
+
+simplifyExpr(e : Expr) -> Expr {
+    switch (e) {
+        Mul(l, r) : {
+            if (simplifyExpr(l) == IntConst(1)) {simplifyExpr(r);}
+            else if (simplifyExpr(r) == IntConst(1)) {simplifyExpr(l);}
+            else if (simplifyExpr(l) == IntConst(0) || (simplifyExpr(r) == IntConst(0))) {IntConst(0);}
+            else {Mul(simplifyExpr(l), simplifyExpr(r));}
+        }
+        Add (l, r) : {
+            if (simplifyExpr(l) == IntConst(0)) {simplifyExpr(r);}
+            else if (simplifyExpr(r) == IntConst(0)) {simplifyExpr(l);}
+            else {Add(simplifyExpr(l), simplifyExpr(r));}
+        }
+        Sub(l, r) : {
+            if (simplifyExpr(l) == IntConst(0)) {Neg(simplifyExpr(r));}
+            else if (simplifyExpr(r) == IntConst(0)) {simplifyExpr(l);}
+            else if (simplifyExpr(l) == simplifyExpr(r)) {IntConst(0);}
+            else Sub(simplifyExpr(l), simplifyExpr(r));
+        }
+        Div(l, r) : {
+            if (simplifyExpr(l) == IntConst(0)) {IntConst(0);}
+            else if (simplifyExpr(l) == simplifyExpr(r)) {IntConst(1);}
+            else Div(simplifyExpr(l), simplifyExpr(r));
+        }
+        default : e;
+    }
+}
+
+main() {
+    vars = [Pair("x", 2), Pair("y", 3)];
+    varsTree = setTreeValues(TreeEmpty(), vars);
+
+    result = s2expr("((x * x) + y)");
+    deriv = simplifyExpr(derivation(result, "x"));
+    println(expr2s(deriv));
+    println(rat2s(expr2rat(deriv, varsTree)));
+
+    quit(0);
+}

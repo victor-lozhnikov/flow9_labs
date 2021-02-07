@@ -1,0 +1,102 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+lingoGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+lingoGrammar() {
+	onlyOnce(lingoGrammarOp, \ -> {
+		compilePegGrammar("#include arith_full.lingo");
+	});
+}
+
+Expr ::= IntConst, Mul, Add, Sub, Div, Neg, Var;
+IntConst : (value : int);
+Add : (left : Expr, right : Expr);
+Sub : (left : Expr, right : Expr);
+Mul : (left : Expr, right : Expr);
+Div : (left : Expr, right : Expr);
+Neg : (arg : Expr);
+Var : (name : string);
+
+Rational(n : int, d : int);
+
+i2rat(a : int) -> Rational {
+    Rational(a, 1);
+}
+
+rat2s(r : Rational) -> string {
+    if (r.d == 1) {i2s(r.n);}
+    else if (r.d == 0) {"inf";}
+    else i2s(r.n) + "/" + i2s(r.d);
+}
+
+simplify(r : Rational) -> Rational {
+    g = gcd(r.n, r.d);
+    Rational(r.n / g, r.d / g);
+}
+
+addRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d + r.n * l.d, l.d * r.d);
+}
+
+subRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d - r.n * l.d, l.d * r.d);
+}
+
+mulRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.n, l.d * r.d);
+}
+
+divRat(l : Rational, r : Rational) -> Rational {
+    Rational(l.n * r.d, l.d * r.n);
+}
+
+negRat(arg : Rational) {
+    Rational(-arg.n, arg.d);
+}
+
+Str(e : Expr) -> string {
+    switch (e) {
+        IntConst(c) : {i2s(c)}
+        Mul(l, r) : {"(" + Str(l) + " * " + Str(r) + ")"}
+        Add(l, r) : {"(" + Str(l) + " + " + Str(r) + ")"}
+        Sub(l, r) : {"(" + Str(l) + " - " + Str(r) + ")"}
+        Div(l, r) : {"(" + Str(l) + " / " + Str(r) + ")"}
+        Neg(arg) : {"(-" + Str(arg) + ")"}
+        Var(x) : {x}
+    }
+}
+
+Val(e: Expr, vars : Tree<string, int>) -> Rational {
+    switch (e) {
+        IntConst(c) : {i2rat(c)}
+        Mul(l, r) : {simplify(mulRat(Val(l, vars), Val(r, vars)))}
+        Add(l, r) : {simplify(addRat(Val(l, vars), Val(r, vars)))}
+        Sub(l, r) : {simplify(subRat(Val(l, vars), Val(r, vars)))}
+        Div(l, r) : {simplify(divRat(Val(l, vars), Val(r, vars)))}
+        Neg(arg) : {negRat(Val(arg, vars))}
+        Var(name) : {
+            x = switch(lookupTree(vars, name)) {
+                None() : {i2rat(0)}
+                Some(val) : {i2rat(val)}
+            };
+            x;
+        }
+    }
+}
+
+Parse(s : string) -> Expr {
+    parsic(lingoGrammar(), s, defaultPegActions);
+}
+
+main() {
+    vars = [Pair("xx", 2), Pair("yy", 3)];
+    varsTree = setTreeValues(TreeEmpty(), vars);
+
+    result = Parse("(((-xx) + (yy - 2)) / (5 * 6))");
+    println(Str(result));
+    println(rat2s(Val(result, varsTree)));
+
+    quit(0);
+}
