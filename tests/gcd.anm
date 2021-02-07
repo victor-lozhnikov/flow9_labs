@@ -1,0 +1,39 @@
+var x : int;
+var y : int;
+var a : int;
+var b : int;
+var z : int;
+var t : int;
+var s : int;
+
+formula divides (x, y)
+exists t (y = (t * x))
+
+formula gcd (x, y, z)
+(divides(z, x) and
+	(divides(z, y) and
+		forall s (
+			(divides(s, x) and divides(s, y)) 
+			=>
+			(s <= z)
+		)
+	)
+)
+
+{ ((x = a) and (y = b)) }
+{
+	iter inv { forall t ((gcd(a, b, t) => gcd(x, y, t)) and (gcd(x, y, t) => gcd(a, b, t))) } {
+		union {
+			{ 
+				test(x > y); 
+				x := (x - y);
+			}
+			{
+				test(x < y);
+				y := (y - x);
+			}
+		}
+	}
+	test (x = y);
+}
+{ gcd(a, b, x) }

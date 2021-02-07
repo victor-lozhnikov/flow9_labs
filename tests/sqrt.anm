@@ -1,0 +1,18 @@
+var n : int;
+var x : int;
+var y : int;
+
+function sqr(x)
+(x * x)
+
+{ (n >= 0) }
+{
+	x := 0;
+	y := 0;
+	while (y <= n) inv { ((n >= 0) and ((y = sqr(x)) and ((sqr((x - 1)) <= n) or (x = 0)))) } {
+		y := (y + (x + (x + 1)));
+		x := (x + 1);
+	}
+	x := (x - 1);
+}
+{ ((sqr(x) <= n) and (sqr((x + 1)) > n)) }
