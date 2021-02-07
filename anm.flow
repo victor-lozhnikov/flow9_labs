@@ -1,0 +1,313 @@
+import string;
+import lingo/peg;
+import lingo/pegcode/driver;
+
+specialPegActions = {
+    SemanticActions(
+        setTree(defaultPegActions.t, "buildParams", \params -> {
+            concat(params[0], [params[1]])
+        })
+    );
+}
+
+parseProgram(s : string) -> Program {
+    grammar = "#include annotated_nemo.lingo";
+    parsic(compilePegGrammar(grammar), s, specialPegActions);
+}
+
+Program : (definitions : [Definition], formulas : [FormulaDefinition], functions : [FunctionDefinition], hoare_triple : HoareTriple);
+
+Definition : (varname : VarName, vartype : VarType);
+
+FormulaDefinition : (name : VarName, params : [VarName], body : FormulaBody);
+FormulaBody ::= True, False, Condition, LogicalExpression, Call;
+
+FunctionDefinition : (name : VarName, params : [VarName], body : Expression);
+
+HoareTriple : (precondition : FormulaBody, statement : Statement, postcondition : FormulaBody);
+
+Statement : (operations : [Operation]);
+Operation ::= Assignment, Test, Union, While, Iter, Statement;
+
+VarType ::= IntType, ArrayType;
+IntType : ();
+ArrayType : (type : VarType);
+
+Assignment : (var : VarName, expression : Expression);
+Print : (expression : Expression);
+Test : (condition : Condition);
+Union : (statement : Statement);
+While : (condition : Condition, invariant : FormulaBody, statement : Statement);
+Iter : (invariant : FormulaBody, statement : Statement);
+
+Expression ::= Operand, ArithmeticExpression, FunctionalExpression, Call;
+Operand ::= Int, VarName;
+
+ArithmeticExpression : (expr1 : Expression, sign : string, expr2 : Expression);
+
+FunctionalExpression ::= Appeal, Update;
+Appeal : (array : Expression, index : Expression);
+Update : (array : Expression, index : Expression, newVal : Expression);
+
+Condition : (expr1 : Expression, sign : string, expr2 : Expression);
+
+LogicalExpression ::= UnaryLogicalExpression, BinaryLogicalExpression, QuantifierLogicalExpression;
+UnaryLogicalExpression : (sign : string, f1 : FormulaBody);
+BinaryLogicalExpression : (f1 : FormulaBody, sign : string, f2 : FormulaBody);
+QuantifierLogicalExpression : (quantifier : string, var : Expression, f1 : FormulaBody);
+
+Value ::= Int, Array, NaN;
+
+True : ();
+False : ();
+
+Call : (name : Expression, params : [Expression]);
+
+Int : (value : int);
+Array : (type : VarType, array : Tree<int, Value>);
+NaN : ();
+VarName : (name : string);
+
+generateCorrectnessCondition(triple : HoareTriple) -> Set<FormulaBody> {
+    set = makeSet1(BinaryLogicalExpression(triple.precondition, "=>", AC(triple.statement, triple.postcondition)));
+    mergeSets(set, VC(triple.statement, triple.postcondition));
+}
+
+AC (operation : Operation, formula : FormulaBody) -> FormulaBody {
+    switch(operation) {
+        Statement(opers) : {
+            if (length(opers) == 1) AC(opers[0], formula)
+            else AC(opers[0], AC(Statement(removeIndex(opers, 0)), formula));
+        }
+        Union(st) : {
+            opers = st.operations;
+            if (length(opers) == 1) AC(opers[0], formula)
+            else BinaryLogicalExpression(AC(opers[0], formula), "and", AC(Union(Statement(removeIndex(opers, 0))), formula));
+        }
+        While(cond, inv, st) : {
+            inv;
+        }
+        Iter(inv, st) : {
+            inv;
+        }
+        Assignment(var, expr) : {
+            replaceOccurrencesInFormula(formula, var, expr);
+        }
+        Test(cond) : {
+            BinaryLogicalExpression(cond, "=>", formula);
+        }
+    }
+}
+
+VC (operation : Operation, formula : FormulaBody) -> Set<FormulaBody> {
+    switch(operation) {
+        Statement(opers) : {
+            if (length(opers) == 1) VC(opers[0], formula)
+            else mergeSets(VC(opers[0], AC(Statement(removeIndex(opers, 0)), formula)), VC(Statement(removeIndex(opers, 0)), formula));
+        }
+        Union(st) : {
+            opers = st.operations;
+            if (length(opers) == 1) VC(opers[0], formula)
+            else mergeSets(VC(opers[0], formula), VC(Statement(removeIndex(opers, 0)), formula));
+        }
+        While(cond, inv, st) : {
+            t1 = VC(st, inv);
+            t2 = mergeSets(t1, makeSet1(BinaryLogicalExpression(BinaryLogicalExpression(inv, "and", UnaryLogicalExpression("not", cond)), "=>", formula)));
+            mergeSets(t2, makeSet1(BinaryLogicalExpression(BinaryLogicalExpression(inv, "and", cond), "=>", AC(st, inv))));
+        }
+        Iter(inv, st) : {
+            t1 = VC(st, inv);
+            mergeSets(t1, makeSet1(BinaryLogicalExpression(inv, "=>", formula)));
+        }
+        default : makeSet();
+    }
+}
+
+replaceOccurrencesInFormula(formula : FormulaBody, from : VarName, to : Expression) -> FormulaBody {
+    switch (formula) {
+        Condition(exp1, sgn, exp2) : {
+            Condition(replaceOccurrencesInExpression(exp1, from, to), sgn, replaceOccurrencesInExpression(exp2, from, to));
+        }
+        UnaryLogicalExpression(sgn, f1) : {
+            UnaryLogicalExpression(sgn, replaceOccurrencesInFormula(f1, from, to));
+        }
+        BinaryLogicalExpression(f1, sgn, f2) : {
+            BinaryLogicalExpression(replaceOccurrencesInFormula(f1, from, to), sgn, replaceOccurrencesInFormula(f2, from, to));
+        }
+        QuantifierLogicalExpression(sgn, var, f1) : {
+            QuantifierLogicalExpression(sgn, replaceOccurrencesInExpression(var, from, to), replaceOccurrencesInFormula(f1, from, to));
+        }
+        Call(name, params) : {
+            Call(replaceOccurrencesInExpression(name, from, to),
+            map(params, \par -> {replaceOccurrencesInExpression(par, from, to)}));
+        }
+        True() : True();
+        False() : False();
+    }
+}
+
+replaceOccurrencesInExpression(expr : Expression, from : VarName, to : Expression) -> Expression {
+    switch(expr) {
+        Int(val) : {
+            expr;
+        }
+        VarName(n) : {
+            if (expr == from) to
+            else expr;
+        }
+        ArithmeticExpression(exp1, sgn, exp2) : {
+            ArithmeticExpression(replaceOccurrencesInExpression(exp1, from, to), sgn, replaceOccurrencesInExpression(exp2, from, to));
+        }
+        Appeal(exp1, exp2) : {
+            Appeal(replaceOccurrencesInExpression(exp1, from, to), replaceOccurrencesInExpression(exp2, from, to));
+        }
+        Update(exp1, exp2, exp3) : {
+            Update(replaceOccurrencesInExpression(exp1, from, to), replaceOccurrencesInExpression(exp2, from, to), replaceOccurrencesInExpression(exp3, from, to));
+        }
+        Call(name, params) : {
+            Call(replaceOccurrencesInExpression(name, from, to),
+            map(params, \par -> {replaceOccurrencesInExpression(par, from, to)}));
+        }
+    }
+}
+
+generateZ3program(prog : Program, conds : Set<FormulaBody>) {
+    typeTree = createTypeTree(prog.definitions);
+    iter(tree2pairs(typeTree), \pair -> {
+        printZ3declareVar(pair);
+    });
+    iter(prog.formulas, \f -> {
+        printZ3declareFormula(f, typeTree);
+    });
+    iter(prog.functions, \f -> {
+        printZ3declareFunction(f, typeTree);
+    });
+    iterSet(conds, \cond -> {
+        printZ3assert(cond, typeTree);
+    });
+    println("(check-sat)");
+}
+
+printZ3declareVar(pair : Pair<VarName, VarType>) {
+    println("(declare-const " + pair.first.name + " " + type2Z3s(pair.second) + ")");
+}
+
+printZ3declareFormula(f : FormulaDefinition, typeTree : Tree<VarName, VarType>) {
+    println("(define-fun " + f.name.name + " ( " + 
+    fold(f.params, "", \acc, p -> {
+        acc + "(" + p.name + " " + switch(lookupTree(typeTree, p)) {
+            None() : "";
+            Some(type) : type2Z3s(type);
+        } + ") ";
+    }) + ") Bool " + formulaBody2Z3s(f.body, typeTree) + ")");
+}
+
+printZ3declareFunction(f : FunctionDefinition, typeTree : Tree<VarName, VarType>) {
+    println("(define-fun " + f.name.name + " ( " + 
+    fold(f.params, "", \acc, p -> {
+        acc + "(" + p.name + " " + switch(lookupTree(typeTree, p)) {
+            None() : "";
+            Some(type) : type2Z3s(type);
+        } + ") ";
+    }) + ") Int " + expression2Z3s(f.body, typeTree) + ")");
+}
+
+printZ3assert(f : FormulaBody, typeTree : Tree<VarName, VarType>) {
+    println("(assert " + formulaBody2Z3s(f, typeTree) + ")");
+}
+
+formulaBody2Z3s(f : FormulaBody, typeTree : Tree<VarName, VarType>) -> string {
+    switch(f) {
+        True() : "true";
+        False() : "false";
+        Condition(e1, sgn, e2) : {
+            "(" + sgn + " " + expression2Z3s(e1, typeTree) + " " + expression2Z3s(e2, typeTree) + ")";
+        }
+        UnaryLogicalExpression(sgn, f1) : {
+            "(" + sgn + " " + formulaBody2Z3s(f1, typeTree) + ")";
+        }
+        BinaryLogicalExpression(f1, sgn, f2) : {
+            "(" + sgn + " " + formulaBody2Z3s(f1, typeTree) + " " + formulaBody2Z3s(f2, typeTree) + ")";
+        }
+        QuantifierLogicalExpression(sgn, var, f1) : {
+            "(" + sgn + " ((" + expression2Z3s(var, typeTree) + " " + switch(lookupTree(typeTree, var)) {
+                None() : "";
+                Some(type) : type2Z3s(type);
+            } + ")) " + formulaBody2Z3s(f1, typeTree) + ")";
+        }
+        Call(name, params) : {
+            call2Z3s(f, typeTree);
+        }
+    }
+}
+
+expression2Z3s(e : Expression, typeTree : Tree<VarName, VarType>) -> string {
+    switch(e) {
+        Int(val) : i2s(val);
+        VarName(name) : name;
+        ArithmeticExpression(e1, sgn, e2) : {
+            "(" + sgn + " " + expression2Z3s(e1, typeTree) + " " + expression2Z3s(e2, typeTree) + ")";
+        }
+        Appeal(e1, e2) : {
+            "(select " + expression2Z3s(e1, typeTree) + " " + expression2Z3s(e2, typeTree) + ")";
+        }
+        Update(e1, e2, e3) : {
+            "(store " + expression2Z3s(e1, typeTree) + " " + expression2Z3s(e2, typeTree) + " " + expression2Z3s(e3, typeTree) + ")";
+        }
+        Call(name, params) : {
+            call2Z3s(e, typeTree);
+        }
+    }
+}
+
+call2Z3s(call : Call, typeTree : Tree<VarName, VarType>) -> string {
+    "(" + expression2Z3s(call.name, typeTree) + fold(call.params, "", \acc, p -> {
+        acc + " " + expression2Z3s(p, typeTree);
+    }) + ")";
+}
+
+type2Z3s(type : VarType) -> string {
+    switch(type) {
+        IntType() : "Int";
+        ArrayType(t) : "(Array " + type2Z3s(t) + " Int)";
+    }
+}
+
+createTypeTree(defs : [Definition]) -> Tree<VarName, VarType> {
+    fold(defs, makeTree(), \acc, def -> {
+        setTree(acc, def.varname, def.vartype);
+    });
+}
+
+main() {
+    code = getFileContent("projects/anm/tests/sqrt.anm");
+    anmProgram = parseProgram(code);
+    conds = generateCorrectnessCondition(anmProgram.hoare_triple);
+    generateZ3program(anmProgram, conds);
+    quit(0);
+}
+
+
+/*
+Для любой аннотированной тройки Хоара на языке НеМо или I-Pascal
+{ϕ}α{ψ} множество утверждений {(ϕ → AC(α, ψ))} ∪ VC(α, ψ) является ее
+условиями корректности.
+
+Алгоритм AC:
+• AC(x:=t, ψ) = ψt/x,
+• AC(χ?, ψ) = (χ → ψ),
+• AC((α ; β), ψ) = AC(α, AC(β, ψ)),
+• AC((α ∪ β), ψ) = AC(α, ψ) ∧ AC(β, ψ),
+• AC( IF χ THEN α ELSE β, ψ) = ( (χ ∧ AC(α, ψ)) ∨ (¬χ ∧ AC(β, ψ)) ),
+• AC(α*ι, ψ) = ι,
+• AC(WHILEι χ DO α, ψ) = ι.
+
+Алгоритм VC:
+• VC(x:=t, ψ) = ∅,
+• VC(χ?, ψ) = ∅,
+• VC((α ; β), ψ) = VC(α, AC(β, ψ)) ∪ VC(β, ψ),
+• VC((α ∪ β), ψ) = VC(α, ψ) ∪ VC(β, ψ),
+• VC( IF χ THEN α ELSE β, ψ) = VC(α, ψ) ∪ VC(β, ψ),
+• VC(α*ι, ψ) = VC(α, ι) ∪ {(ι→ψ)},
+• VC(WHILEι χ DO α, ψ) = VC(α, ι) ∪ {((ι ∧ ¬χ) →ψ) , ((ι ∧ χ) →AC(α,ι))}.
+*/

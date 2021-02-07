@@ -1,0 +1,57 @@
+program = ws definition*:ds formula_definition*:frs function_definition*:fns hoare_triple:tr {Program(:ds, :frs, :fns, :tr)};
+
+definition = "var" ws varname:name ws ":" ws vartype:type ws ";" ws {Definition(:name, :type)};
+
+formula_definition = "formula" ws varname:name ws params:ps ws formula_body:body ws {FormulaDefinition(:name, :ps, :body)};
+params = "(" ws param_with_semicolon*:vs expression:v ws ")" {buildParams(:vs, :v)};
+    param_with_semicolon = expression:v ws "," ws {:v};
+formula_body = true | false | condition | logical_expression | call;
+
+function_definition = "function" ws varname:name ws params:ps ws expression:e ws {FunctionDefinition(:name, :ps, :e)};
+
+hoare_triple = hoare_condition:pr ws statement:st ws hoare_condition:ps ws {HoareTriple(:pr, :st, :ps)};
+hoare_condition = "{" ws formula_body:f ws "}" {:f};
+
+statement = "{" ws operation*:ops "}" ws {Statement(:ops)};
+operation = test | union | while | iter | assignment | statement;
+
+vartype = int_type | array_type;
+int_type = "int" {IntType()};
+array_type = "[" ws vartype:type ws "]" {ArrayType(:type)};
+
+assignment = varname:var ws ":=" ws expression:expr ws ";" ws {Assignment(:var, :expr)};
+test = "test" ws condition:cond ws ";" ws {Test(:cond)};
+union = "union" ws statement:st {Union(:st)};
+while = "while" ws condition:cond ws "inv" ws "{" ws formula_body:inv ws "}" ws statement:st {While(:cond, :inv, :st)};
+iter = "iter" ws "inv" ws "{" ws formula_body:inv ws "}" ws statement:st {Iter(:inv, :st)};
+
+expression = functional_expression | arithmetic_expression | call | operand;
+operand = int | varname;
+
+arithmetic_expression = "(" ws expression:e1 ws arithmetic_sign$sign ws expression:e2 ws ")" {ArithmeticExpression(:e1, $sign, :e2)};
+arithmetic_sign = "+" | "-" | "*" | "/";
+
+functional_expression = appeal | update;
+appeal = "app" ws "(" ws expression:array ws "," ws expression:index ws ")" {Appeal(:array, :index)};
+update = "upd" ws "(" ws expression:array ws "," ws expression:index ws "," ws expression:new_val ws ")" {Update(:array, :index, :new_val)};
+
+condition = "(" ws expression:e1 ws condition_sign$sign ws expression:e2 ws ")" {Condition(:e1, $sign, :e2)};
+condition_sign = "=" | "!=" | "<=" | ">=" | "<" | ">";
+
+logical_expression = unary_logical_expression | binary_logical_expression | quantifier_logical_expression;
+unary_logical_expression = unary_logical_sign$sign ws "(" ws formula_body:f1 ws ")" {UnaryLogicalExpression($sign, :f1)};
+binary_logical_expression = "(" ws formula_body:f1 ws binary_logical_sign$sign ws formula_body:f2 ws ")" {BinaryLogicalExpression(:f1, $sign, :f2)};
+quantifier_logical_expression = quantifier_sign$sign ws varname:var ws formula_body:f1 {QuantifierLogicalExpression($sign, :var, :f1)};
+
+unary_logical_sign = "not";
+binary_logical_sign = "and" | "or" | "=>";
+quantifier_sign = "forall" | "exists";
+
+true = "true";
+false = "false";
+
+call = varname:name ws params:ps {Call(:name, :ps)};
+
+int = ('0'-'9')+ $d {Int(s2i($d))};
+varname = ('a'-'z' ('a'-'z' | '0'-'9')*) $name {VarName($name)};
+ws = (' ' | '\r' | '\n' | '\t')*;

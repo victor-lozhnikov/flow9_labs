@@ -1,0 +1,15 @@
+expr = ws "(" mul:only ws ")" ws {:only} | 
+       ws "(" add:only ws ")" ws {:only} |
+       ws "(" sub:only ws ")" ws {:only} | 
+       ws "(" div:only ws ")" ws {:only} |
+       ws "(" neg:only ws ")" ws {:only} |
+       int:only {:only} | 
+       var:only{:only};
+add = ws expr:left ws "+" ws expr:right ws {Add(:left, :right)};
+sub = ws expr:left ws "-" ws expr:right ws {Sub(:left, :right)};
+mul = ws expr:left ws "*" ws expr:right ws {Mul(:left, :right)};
+div = ws expr:left ws "/" ws expr:right ws {Div(:left, :right)};
+neg = ws "-" expr:arg ws {Neg(:arg)};
+int = ('0'-'9')+$d {IntConst(s2i($d))};
+var = ('a'-'z')+$s {Var($s)};
+ws = (' ' | '\r' | '\n' | '\t')*;
