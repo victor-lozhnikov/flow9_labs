@@ -1,5 +1,0 @@
-expr = mul:only {:only} | add:only {:only} | int:only {:only};
-add = ws "+" ws expr:left ws expr:right ws {Add(:left, :right)};
-mul = ws "*" ws expr:left ws expr:right ws {Mul(:left, :right)};
-int = ('0'-'9')+$d {IntConst(s2i($d))};
-ws = (' ' | '\r' | '\n' | '\t')*;
